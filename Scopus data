@@ -1,0 +1,75 @@
+import pandas as pd
+import requests
+
+API = ""
+
+# название конференции 
+CONFNAME = ""
+# год от (включительно)
+PUBYEAR_FROM = 2011
+# год до (включительно)
+PUBYEAR_TO = 2020
+# страна
+AFFILCOUNTRY = ""
+
+def _search_scopus(key, query, view, index):
+    """Функция делающая запрос к апи и обрабатывающая то что возвращается"""
+    par = {'apikey': key, 'query': query, 'start': index,
+           'httpAccept': 'application/json', 'view': view}
+    
+    r = requests.get("http://api.elsevier.com/content/search/scopus", params=par)
+    
+
+    js = r.json()
+    total_count = int(js['search-results']['opensearch:totalResults'])
+    entries = js['search-results']['entry']
+
+    result_df = pd.DataFrame([_parse_article(entry) for entry in entries])
+
+    return(result_df, total_count)
+ 
+def _parse_article(entry):
+    """Функция обрабатывающая возвращаемый json"""
+    try:
+        coverdate = entry['prism:coverDate']
+    except:
+        coverdate = None
+
+    try:
+        citationcount = int(entry['citedby-count'])
+    except:
+        citationcount = None
+
+    return pd.Series({'cover_date': coverdate, 'citation_count': citationcount})
+
+def search(query,  view='STANDARD'):
+        """Функция которая выполняет все действия по скачианию и обработке"""
+        i = 1
+        result_df, total_count = _search_scopus(API, query, view=view, index=i)
+
+        
+        while True:
+            index = 25*i
+            print(index, "из", total_count)
+            result_df = result_df.append(_search_scopus(API, query, view=view, index=index)[0],
+                                         ignore_index=True)
+            if result_df.shape[0] >= total_count:
+                return result_df[:total_count]
+            i += 1
+        return result_df
+        
+def get_file(CONFNAME, PUBYEAR_FROM, PUBYEAR_TO, AFFILCOUNTRY, file_name = "exit.csv"):
+    """Скачивает данные и сохраняет в файл"""
+    print("Начало загрузки данных")
+    search_df = search(f"CONFNAME({CONFNAME}) and ((PUBYEAR < {PUBYEAR_TO} or PUBYEAR = {PUBYEAR_TO}) and (PUBYEAR > {PUBYEAR_FROM} or PUBYEAR = {PUBYEAR_FROM})) and AFFILCOUNTRY ({AFFILCOUNTRY})")
+
+    print("Начало обработки данных")
+    search_df.cover_date = list(map(lambda x: x[:4], search_df.cover_date))
+
+    count = pd.DataFrame(search_df.value_counts(subset=["cover_date"]), columns=["count"])
+    citation_count = search_df.groupby("cover_date").sum("citation_count")
+    final = citation_count.merge(count, on="cover_date")
+    final.to_csv(file_name)
+    print(f"Данные сохранены в файл {file_name}")
+get_file(CONFNAME, PUBYEAR_FROM, PUBYEAR_TO, AFFILCOUNTRY, file_name = "exit.csv")
+
